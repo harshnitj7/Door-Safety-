@@ -13,16 +13,16 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 export default function App() {
   const [status, setStatus] = useState('Disconnected');
   const [imageUri, setImageUri] = useState(null);
-  const [imageHeight, setImageHeight] = useState(250); // dynamic height
+  const [imageHeight, setImageHeight] = useState(250);
   const [history, setHistory] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const wsRef = useRef(null);
 
   const STORAGE_KEY = '@door_safety_history';
-  const screenWidth = Dimensions.get('window').width - 40; // container padding (20 each side)
+  const screenWidth = Dimensions.get('window').width - 40;
 
-  // 🔹 Utility: Get scaled height for a given image URL
-  const getDynamicHeight = (uri:any) => {
+  // 🔹 Utility: Calculate dynamic height based on image aspect ratio
+  const getDynamicHeight = (uri) => {
     return new Promise((resolve) => {
       Image.getSize(
         uri,
@@ -32,20 +32,33 @@ export default function App() {
         },
         (error) => {
           console.log('⚠️ Error getting image size:', error);
-          resolve(250); // fallback height
+          resolve(250);
         }
       );
     });
   };
 
-  // 🔹 Set latest image + height
-  const updateMainImage = async (uri:any) => {
-    const h:any = await getDynamicHeight(uri);
+  // 🔹 Update main image + height
+  const updateMainImage = async (uri) => {
+    const h = await getDynamicHeight(uri);
     setImageUri(uri);
     setImageHeight(h);
   };
 
-  // 🔹 Load history from AsyncStorage
+  // 🔹 Optimized save: keep max 20 entries
+  const saveHistory = async (newEntry) => {
+    try {
+      const existing = await AsyncStorage.getItem(STORAGE_KEY);
+      const prevHistory = existing ? JSON.parse(existing) : [];
+      const updatedHistory = [newEntry, ...prevHistory].slice(0, 20);
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updatedHistory));
+      setHistory(updatedHistory);
+    } catch (err) {
+      console.log('⚠️ Error saving history:', err);
+    }
+  };
+
+  // 🔹 Load stored history
   useEffect(() => {
     (async () => {
       try {
@@ -61,16 +74,7 @@ export default function App() {
     })();
   }, []);
 
-  // 🔹 Save updated history
-  const saveHistory = async (newHistory:any) => {
-    try {
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(newHistory));
-    } catch (err) {
-      console.log('⚠️ Error saving history:', err);
-    }
-  };
-
-  // 🔹 WebSocket setup
+  // 🔹 WebSocket connection
   useEffect(() => {
     const WS_URL = 'wss://tsc-project.onrender.com';
     const ws = new WebSocket(WS_URL);
@@ -83,10 +87,7 @@ export default function App() {
         if (data.message === 'New image' && data.url) {
           const timestamp = new Date().toLocaleString();
           await updateMainImage(data.url);
-          const newEntry = { url: data.url, time: timestamp };
-          const updatedHistory:any = [newEntry, ...history];
-          setHistory(updatedHistory);
-          saveHistory(updatedHistory);
+          await saveHistory({ url: data.url, time: timestamp });
           setStatus('Object detected — image received');
         }
       } catch (err) {
@@ -98,9 +99,9 @@ export default function App() {
     ws.onclose = () => setStatus('Disconnected');
     wsRef.current = ws;
     return () => ws.close();
-  }, [history]);
+  }, []);
 
-  // 🔹 Pull-to-refresh: reload + request new image
+  // 🔹 Pull-to-refresh
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
@@ -124,7 +125,7 @@ export default function App() {
       <Text style={styles.header}>Door Safety System</Text>
       <Text>{status}</Text>
 
-      {/* ✅ Fixed width, dynamic height for latest image */}
+      {/* Main Image */}
       <View style={styles.imageBox}>
         {imageUri ? (
           <Image
@@ -137,7 +138,7 @@ export default function App() {
         )}
       </View>
 
-      {/* ✅ Detection History */}
+      {/* Detection History */}
       <Text style={styles.historyTitle}>Detection History</Text>
       <ScrollView
         style={styles.scrollView}
@@ -155,11 +156,8 @@ export default function App() {
   );
 }
 
-/**
- * 📷 Reusable component for history image
- * (calculates its own height dynamically)
- */
-function HistoryImage({ item, screenWidth }:any) {
+/** 📷 History Image Component */
+function HistoryImage({ item, screenWidth }) {
   const [height, setHeight] = useState(150);
 
   useEffect(() => {
@@ -175,7 +173,11 @@ function HistoryImage({ item, screenWidth }:any) {
 
   return (
     <View style={styles.historyItem}>
-      <Image source={{ uri: item.url }} style={{ width: '100%', height }} resizeMode="contain" />
+      <Image
+        source={{ uri: item.url }}
+        style={{ width: '100%', height }}
+        resizeMode="contain"
+      />
       <Text style={styles.timeText}>{item.time}</Text>
     </View>
   );
